@@ -1,57 +1,29 @@
-#include <noise.h>
-#include <bitswap.h>
-#include <fastspi_types.h>
-#include <pixelset.h>
-#include <fastled_progmem.h>
-#include <led_sysdefs.h>
-#include <hsv2rgb.h>
-#include <fastled_delay.h>
-#include <colorpalettes.h>
-#include <color.h>
-#include <fastspi_ref.h>
-#include <fastspi_bitbang.h>
-#include <controller.h>
-#include <fastled_config.h>
-#include <colorutils.h>
-#include <chipsets.h>
-#include <pixeltypes.h>
-#include <fastspi_dma.h>
-#include <fastpin.h>
-#include <fastspi_nop.h>
-#include <platforms.h>
-#include <lib8tion.h>
-#include <cpp_compat.h>
-#include <fastspi.h>
-#include <FastLED.h>
-#include <dmx.h>
-#include <power_mgt.h>
-
 /*
  * Description: Motion activated stair lights.
  * Author: Dean Montgomery
  * Version: 2.5
- * 
+ *
  * Date: Feb 17, 2018
- * 
+ *
  * 2 PIR sesors at the top and bottom of the stairs.
  * WS28012B Addressable RGB lights - 2 LEDs on each stair - This spread out the strip of 30 and left 2-pairs for spare bulbs.
  * My Arduino is at the top of the stairs and the RGB strip is connected at the top.
  * This will cycle through several varitions of stair walkers.
- * 
+ *
  * Version 2 is a rewrite to properly handle multi-tasking the PIR sensors in parallel with LED updates.
  * TODO: Do some code cleanup, variable naming etc.
- * 
+ *
 */
 
 #include "FastLED.h"
 //#include <avr/eeprom.h>
 
-#define NUM_LEDS 12
+#define NUM_LEDS 22
 #define LEDS_PER_STAIR 2        // Number of Leds per stair.  Not yet currenlty changable - just noteable
 #define BRIGHTNESS 120          // 0...255  ( used in fade7 )
-#define PIN_LED 3               // LED Data pin
-#define PIN_PIR_DOWN 5          // PIR Downstairs Pin
-#define PIN_PIR_UP 7            // PIR Upstairs Pin
+#define PIN_LED 5               // LED Data pin
+#define PIN_PIR_DOWN 2          // PIR Downstairs Pin
+#define PIN_PIR_UP 4            // PIR Upstairs Pin
 #define GO_UP -1                // Direction control - Arduino at top of stairs
 #define GO_DOWN 1               // Direction control - Arduino at top of stairs
 uint8_t gHue = 0;               // track color shifts.
@@ -70,7 +42,7 @@ int8_t gLastPalette = 15;       // track last chosen palette.
 unsigned long currentMillis = millis(); // define here so it does not redefine in the loop.
 long previousMillis = 0;
 long previousOffMillis = 0;     // countdown power off timer
-long offInterval = 30000;       // 1000mills * 30sec
+long offInterval = 500;       // 1000mills * 30sec
 long effectInterval = 40;
 enum Effects { effectWalk, effectFlicker, effectFade6 };
 Effects effect = effectWalk;
@@ -93,15 +65,15 @@ CRGB trans2;
 
 void setup() {
   delay (3000); // Power Up 3 second safety delay.
-  //Serial.begin(115200);
+  Serial.begin(115200);
   randomSeed(millis());
-  FastLED.addLeds<WS2812B, PIN_LED, GRB>(leds, NUM_LEDS);  // NOTE set LED string type here. 
+  FastLED.addLeds<WS2812B, PIN_LED, GRB>(leds, NUM_LEDS);  // NOTE set LED string type here.
   FastLED.setDither( 0 );  // Stops flikering in animations.
   pinMode(PIN_PIR_DOWN, INPUT); //5
   pinMode(PIN_PIR_UP, INPUT);  //7
   pinMode(13, OUTPUT);
   digitalWrite(PIN_PIR_DOWN, LOW);
-  digitalWrite(PIN_PIR_UP, LOW);
+  //digitalWrite(PIN_PIR_UP, LOW);
   welcomeRainbow();             // rainbow - give time for PIR sensors to colibrate.
   setUpDown(GO_DOWN);           // populate the array index used for stair direction.
   setPalette();                 // setup some favorite & random colors
@@ -114,10 +86,11 @@ void loop() {
   readSensors();
   if(currentMillis - previousMillis > effectInterval) {
     previousMillis = currentMillis;
-    update_effect(); 
+    update_effect();
     FastLED.show();
   }
   if((currentMillis - previousOffMillis > offInterval) && stage == stage_run){
+    Serial.println("INIT DIM(turning-off)!");
     stage = stage_init_dim;
     i = 0; r = 0; g = 0; b = 0;
   }
@@ -125,42 +98,52 @@ void loop() {
 
 void readSensors(){
   if ( digitalRead(PIN_PIR_UP) == HIGH ){  // Walk Down.
+     Serial.println("Walking down!");
     previousOffMillis = currentMillis;
     if ( stage == off ){
+      Serial.println("Sensor: Turn lights on");
       chooseEffects();
       stage = stage_init;
       setUpDown(GO_DOWN);
-    } else if ( stage == stage_dim || stage == stage_init_dim ){
+    }
+    else if ( stage == stage_dim || stage == stage_init_dim ){
+      Serial.println("Sensor: Abort DIM_OFF");
       stage = stage_init_run;
     }
   } else if ( digitalRead(PIN_PIR_DOWN) == HIGH  ){ // Walk Up.
+    Serial.println("Walking UP!");
     previousOffMillis = currentMillis;
     if ( stage == off ){
+      Serial.println("Setting effect");
       chooseEffects();
       stage = stage_init;
       setUpDown(GO_UP);
     } else if ( stage == stage_dim || stage == stage_init_dim){
+      Serial.println("Init state");
       stage = stage_init_run;
     }
   }
+  else{
+    //Serial.print(".");
+  }
 }
-   
+
 void chooseEffects(){
   randomSeed(millis());
   r = random8(1, 255);
-  //effect = effectFlicker; return;  // temporarily force effect for debugging: effectWalk, effectFlicker, effectFade6
+  effect = effectWalk; return;  // temporarily force effect for debugging: effectWalk, effectFlicker, effectFade6
   if ( r >= 0 && r <= 100 ){
     effect = effectWalk;     // My favorite transition with random effect variations
   } else if ( r > 100 && r <= 175 ){
     effect = effectFlicker;  // Candle with embers.
   } else {
     effect = effectFade6;    // hueshift rainbow.
-  } 
+  }
 }
 
 void update_effect(){
   if ( effect == effectWalk ){
-    walk();  
+    walk();
   } else if ( effect == effectFlicker ){
     flicker();
   } else if ( effect == effectFade6 ){
@@ -179,7 +162,7 @@ void setUpDown(int8_t upDownDir){
   } else {
     for ( gStair = 0; gStair <= NUM_LEDS; gStair++ ){
       gUpDown[gStair] = gStairStart++;
-    }  
+    }
   }
 }
 
@@ -223,10 +206,10 @@ void setPalette(){
 
 // Walk the stairs adding random effects.
 void walk() {
-  
+
   if ( stage == stage_init ){
     topBrightness = 200;
-    // Pick two colors from the palette. 
+    // Pick two colors from the palette.
     choosePalette();
     c1 = gPalette[gLastPalette];
     c2 = gPalette[gLastPalette+1];
@@ -315,17 +298,17 @@ void walk() {
       for ( gStairLeds=0; gStairLeds < LEDS_PER_STAIR; gStairLeds++ ){
         leds[gUpDown[gStair + gStairLeds]] = CRGB( 0, 0, 0);
       }
-      gStair += LEDS_PER_STAIR; 
+      gStair += LEDS_PER_STAIR;
       gBright = 0;
     }
   } else {
     stage = off;
-  }  
+  }
 }
 
 // Random effects for the walk() stair function.
 void randomEffect(){
-  if ( walk_effect == sparkle ) { 
+  if ( walk_effect == sparkle ) {
     effectInterval = 8;
     fill_solid(leds, NUM_LEDS, c2);
     addGlitter(80);
@@ -369,7 +352,7 @@ void randomEffect(){
       }
       x = 1;
       gStair=0;
-    } 
+    }
   }
 }
 
@@ -381,7 +364,7 @@ void welcomeRainbow(){
     FastLED.delay(8.3);
     EVERY_N_MILLISECONDS( 20 ) { gHue++; }
   }
-  for (int tick=0; tick < 64; tick++){ 
+  for (int tick=0; tick < 64; tick++){
     for ( uint16_t i = 0; i < NUM_LEDS; i++ ){
       leds[i].fadeToBlackBy( 64 );
       FastLED.show();
@@ -444,7 +427,7 @@ void flicker(){
   } else if ( stage == stage_init_run ){
     stage = stage_run;
   } else if ( stage == stage_run ){
-    for( gStair = 0; gStair <= (NUM_LEDS - LEDS_PER_STAIR); gStair += LEDS_PER_STAIR) {  
+    for( gStair = 0; gStair <= (NUM_LEDS - LEDS_PER_STAIR); gStair += LEDS_PER_STAIR) {
       rnd = random8(1, 4);
       if ( rnd == 2 ){
         gBright = random8(110,140);
@@ -480,7 +463,7 @@ void flicker(){
     }
   } else {
     stage = off;
-  }  
+  }
 }
 
 // Fade6 effect with each led using a hue shift
@@ -543,7 +526,7 @@ void fade(){
       for ( gStairLeds=0; gStairLeds < LEDS_PER_STAIR; gStairLeds++ ){
         leds[gUpDown[gStair + gStairLeds]] = CRGB( 0, 0, 0);
       }
-      gStair += LEDS_PER_STAIR; 
+      gStair += LEDS_PER_STAIR;
       v = BRIGHTNESS;
       h+=2;
     }
@@ -551,4 +534,3 @@ void fade(){
     stage = off;
   }
 }
-
